@@ -1,0 +1,26 @@
+{
+  "telegram": {
+    "bot_token": "YOUR_BOT_TOKEN_FROM_BOTFATHER",
+    "api_id": "YOUR_API_ID_FROM_MY_TELEGRAM_ORG",
+    "api_hash": "YOUR_API_HASH_FROM_MY_TELEGRAM_ORG",
+    "admin_id": "YOUR_TELEGRAM_USER_ID"
+  },
+  "payment": {
+    "bank_card_number": "YOUR_BANK_CARD_NUMBER"
+  },
+  "database": {
+    "user": "maxvpn",
+    "password": "CHANGE_THIS_PASSWORD",
+    "name": "maxvpn_db",
+    "redis_url": "redis://localhost:6379/0"
+  },
+  "gemini": {
+    "api_key": "YOUR_GEMINI_API_KEY",
+    "model": "gemini-2.5-flash"
+  },
+  "server": {
+    "host": "YOUR_SERVER_IP_OR_DOMAIN",
+    "use_valid_ssl": false
+  },
+  "pyrogram_session_string": ""
+}
