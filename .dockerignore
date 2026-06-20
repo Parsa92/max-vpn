@@ -1,0 +1,9 @@
+.env
+__pycache__/
+.git/
+*.pyc
+.mimocode/
+docs/
+.bash_history
+.profile
+.bashrc
