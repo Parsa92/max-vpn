@@ -1,6 +1,7 @@
 import json
 import logging
 import google.generativeai as genai
+import httpx
 import config
 
 logger = logging.getLogger("userbot.ai_fallback")
@@ -32,63 +33,96 @@ Rules:
 - Only output the JSON object, nothing else"""
 
 
+def _extract_buttons(reply_markup) -> list[str]:
+    buttons = []
+    if reply_markup is None:
+        return buttons
+    if isinstance(reply_markup, str):
+        return buttons
+    try:
+        if hasattr(reply_markup, "keyboard"):
+            for row in reply_markup.keyboard:
+                for b in row:
+                    text = b.text if hasattr(b, "text") else str(b)
+                    buttons.append(text)
+        if hasattr(reply_markup, "inline_keyboard"):
+            for row in reply_markup.inline_keyboard:
+                for b in row:
+                    text = b.text if hasattr(b, "text") else str(b)
+                    buttons.append(text)
+    except Exception:
+        pass
+    return buttons
+
+
 async def fallback_ai_agent(chat_history: list[dict], plan: dict) -> dict | None:
     if not config.GEMINI_API_KEY:
         logger.warning("Gemini API key not configured, skipping AI fallback")
         return None
 
+    formatted_history = []
+    for msg in chat_history:
+        sender = "Bot" if msg.get("from_user") else "User"
+        text = msg.get("text", "")
+        buttons = _extract_buttons(msg.get("reply_markup"))
+        entry = f"[{sender}]: {text}"
+        if buttons:
+            entry += f"\nButtons: {', '.join(buttons)}"
+        formatted_history.append(entry)
+
+    conversation = "\n".join(formatted_history)
+    system = SYSTEM_PROMPT.format(plan_name=plan["name"], plan_data=plan["data_gb"])
+    prompt = f"{system}\n\nRecent conversation:\n{conversation}\n\nWhat is the next action?"
+
+    text = None
+
     try:
         model = genai.GenerativeModel(config.GEMINI_MODEL)
-
-        formatted_history = []
-        for msg in chat_history:
-            sender = "Bot" if msg.get("from_user") else "User"
-            text = msg.get("text", "")
-            buttons = []
-            if msg.get("reply_markup"):
-                rm = msg["reply_markup"]
-                if hasattr(rm, "keyboard"):
-                    for row in rm.keyboard:
-                        for b in row:
-                            buttons.append(b.text)
-                elif hasattr(rm, "inline_keyboard"):
-                    for row in rm.inline_keyboard:
-                        for b in row:
-                            buttons.append(b.text)
-            entry = f"[{sender}]: {text}"
-            if buttons:
-                entry += f"\nButtons: {', '.join(buttons)}"
-            formatted_history.append(entry)
-
-        conversation = "\n".join(formatted_history)
-        system = SYSTEM_PROMPT.format(plan_name=plan["name"], plan_data=plan["data_gb"])
-
-        prompt = f"{system}\n\nRecent conversation:\n{conversation}\n\nWhat is the next action?"
-
         response = await model.generate_content_async(prompt)
         text = response.text.strip()
+        logger.info("Gemini SDK call succeeded")
+    except Exception as e:
+        logger.warning(f"Gemini SDK failed ({type(e).__name__}: {e}), trying REST API fallback")
+        try:
+            resp = httpx.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GEMINI_API_KEY}",
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=30.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                logger.info("Gemini REST API fallback succeeded")
+            else:
+                logger.error(f"Gemini REST API returned {resp.status_code}: {resp.text[:300]}")
+                return None
+        except Exception as e2:
+            logger.error(f"Gemini REST API fallback also failed: {e2}")
+            return None
 
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
+    if not text:
+        return None
 
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+        if text.endswith("```"):
+            text = text[:-3]
+
+    try:
         result = json.loads(text)
-
-        if "action" not in result or "value" not in result:
-            logger.error(f"Invalid AI response format: {result}")
-            return None
-
-        if result["action"] not in ("send_text", "click_inline", "click_reply", "extract_url"):
-            logger.error(f"Invalid action: {result['action']}")
-            return None
-
-        logger.info(f"AI fallback action: {result}")
-        return result
-
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse AI response as JSON: {e}")
         return None
-    except Exception as e:
-        logger.error(f"AI fallback error: {e}", exc_info=True)
+
+    if "action" not in result or "value" not in result:
+        logger.error(f"Invalid AI response format: {result}")
         return None
+
+    if result["action"] not in ("send_text", "click_inline", "click_reply", "extract_url"):
+        logger.error(f"Invalid action: {result['action']}")
+        return None
+
+    logger.info(f"AI fallback action: {result}")
+    return result

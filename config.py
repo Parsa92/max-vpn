@@ -28,7 +28,13 @@ BANK_CARD_NUMBER = _payment.get("bank_card_number", "")
 DB_USER = _database.get("user", "maxvpn")
 DB_PASS = _database.get("password", "maxvpn_pass")
 DB_NAME = _database.get("name", "maxvpn_db")
-REDIS_URL = _database.get("redis_url", "redis://redis:6379/0")
+
+DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
+REDIS_HOST = os.environ.get("REDIS_HOST", "127.0.0.1")
+
+DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}:5432/{DB_NAME}"
+DATABASE_URL_SYNC = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:5432/{DB_NAME}"
+REDIS_URL = f"redis://{REDIS_HOST}:6379/0"
 
 GEMINI_API_KEY = _gemini.get("api_key", "")
 GEMINI_MODEL = _gemini.get("model", "gemini-1.5-pro-latest")
@@ -37,9 +43,6 @@ SERVER_HOST = _server.get("host", "localhost")
 USE_VALID_SSL = _server.get("use_valid_ssl", False)
 
 PYROGRAM_SESSION_STRING = _config.get("pyrogram_session_string", "")
-
-DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@postgres:5432/{DB_NAME}"
-DATABASE_URL_SYNC = f"postgresql://{DB_USER}:{DB_PASS}@postgres:5432/{DB_NAME}"
 
 PLANS = [
     {"id": 1, "name": "10 GB", "data_gb": 10, "price": 100_000, "duration_days": 30},

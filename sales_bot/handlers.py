@@ -1,13 +1,15 @@
 import datetime
 import logging
-import io
 from aiogram import Router, F, Bot
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, KeyboardButton
 )
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy import select
+from arq.connections import RedisSettings
 import config
 from database import async_session
 from models import User, Order, Payment
@@ -22,6 +24,10 @@ MAIN_KB = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
 )
+
+
+class AdminAmountState(StatesGroup):
+    waiting_for_amount = State()
 
 
 async def get_or_create_user(message: Message) -> User:
@@ -118,30 +124,22 @@ async def handle_photo(message: Message):
         await session.commit()
         await session.refresh(payment)
 
-    approve_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ تایید 100K", callback_data=f"approve:{payment.id}:100000"),
-            InlineKeyboardButton(text="✅ تایید 250K", callback_data=f"approve:{payment.id}:250000"),
-        ],
-        [
-            InlineKeyboardButton(text="✅ تایید 500K", callback_data=f"approve:{payment.id}:500000"),
-            InlineKeyboardButton(text="✅ تایید 1M", callback_data=f"approve:{payment.id}:1000000"),
-        ],
-        [
-            InlineKeyboardButton(text="❌ رد", callback_data=f"reject:{payment.id}"),
-        ],
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✍️ وارد کردن مبلغ", callback_data=f"enter_amount:{payment.id}")],
+        [InlineKeyboardButton(text="❌ رد", callback_data=f"reject:{payment.id}")],
     ])
 
     bot = message.bot
-    admin_msg = await bot.send_photo(
+    await bot.send_photo(
         chat_id=config.ADMIN_ID,
         photo=receipt_file_id,
         caption=(
             f"📥 رسید پرداخت جدید\n"
             f"کاربر: @{user.username or 'ندارد'} (ID: {user.telegram_id})\n"
-            f"شناسه پرداخت: {payment.id}"
+            f"شناسه پرداخت: {payment.id}\n\n"
+            f"مبلغ را وارد کنید:"
         ),
-        reply_markup=approve_kb,
+        reply_markup=kb,
     )
 
     await message.answer(
@@ -149,21 +147,42 @@ async def handle_photo(message: Message):
     )
 
 
-@router.callback_query(F.data.startswith("approve:"))
-async def cb_approve_payment(callback: CallbackQuery, bot: Bot):
+@router.callback_query(F.data.startswith("enter_amount:"))
+async def cb_enter_amount(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id != config.ADMIN_ID:
         await callback.answer("⛔ فقط ادمین", show_alert=True)
         return
 
-    parts = callback.data.split(":")
-    payment_id = int(parts[1])
-    amount = int(parts[2])
+    payment_id = int(callback.data.split(":")[1])
+    await state.update_data(payment_id=payment_id)
+    await state.set_state(AdminAmountState.waiting_for_amount)
+
+    await callback.message.answer("✍️ مبلغ پرداخت را به تومان وارد کنید (فقط عدد):")
+    await callback.answer()
+
+
+@router.message(AdminAmountState.waiting_for_amount)
+async def process_admin_amount(message: Message, state: FSMContext, bot: Bot):
+    if message.from_user.id != config.ADMIN_ID:
+        return
+
+    try:
+        amount = int(message.text.strip().replace(",", "").replace(" ", ""))
+        if amount <= 0:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ لطفاً یک عدد معتبر وارد کنید:")
+        return
+
+    data = await state.get_data()
+    payment_id = data.get("payment_id")
+    await state.clear()
 
     async with async_session() as session:
         result = await session.execute(select(Payment).where(Payment.id == payment_id))
         payment = result.scalar_one_or_none()
         if not payment:
-            await callback.answer("پرداخت یافت نشد", show_alert=True)
+            await message.answer("پرداخت یافت نشد")
             return
 
         payment.amount = amount
@@ -177,28 +196,21 @@ async def cb_approve_payment(callback: CallbackQuery, bot: Bot):
 
         await session.commit()
 
-    await bot.edit_message_caption(
-        chat_id=config.ADMIN_ID,
-        message_id=callback.message.message_id,
-        caption=(
-            f"✅ پرداخت تایید شد\n"
-            f"مبلغ: {int(amount):,} تومان\n"
-            f"شناسه: {payment_id}"
-        ),
-        reply_markup=None,
+    await message.answer(
+        f"✅ پرداخت تایید شد\n"
+        f"مبلغ: {amount:,} تومان\n"
+        f"شناسه: {payment_id}"
     )
 
     if user:
         try:
             await bot.send_message(
                 chat_id=user.telegram_id,
-                text=f"✅ کیف پول شما شارژ شد!\nمبلغ: <b>{int(amount):,} تومان</b>\n"
-                     f"موجودی فعلی: <b>{int(user.balance):,} تومان</b>",
+                text=f"✅ کیف پول شما شارژ شد!\nمبلغ: <b>{amount:,} تومان</b>\n"
+                     f"موجودی فعلی: <b>{user.balance:,} تومان</b>",
             )
         except Exception as e:
             logger.error(f"Failed to notify user {user.telegram_id}: {e}")
-
-    await callback.answer("تایید شد")
 
 
 @router.callback_query(F.data.startswith("reject:"))
@@ -301,6 +313,8 @@ async def cb_select_plan(callback: CallbackQuery, bot: Bot):
         await session.commit()
         await session.refresh(order)
 
+        updated_balance = db_user.balance
+
     await bot.edit_message_text(
         chat_id=callback.message.chat.id,
         message_id=callback.message.message_id,
@@ -316,13 +330,9 @@ async def cb_select_plan(callback: CallbackQuery, bot: Bot):
     )
 
     from arq import create_pool
-    from userbot.worker import ArqSettings
 
     try:
-        pool = await create_pool(
-            config.REDIS_URL,
-            jobs_registry=None,
-        )
+        pool = await create_pool(RedisSettings(host="127.0.0.1", port=6379))
         await pool.enqueue_job("process_order", order_id=order.id, plan_id=plan["id"])
         logger.info(f"Order #{order.id} queued for processing")
     except Exception as e:
@@ -333,6 +343,20 @@ async def cb_select_plan(callback: CallbackQuery, bot: Bot):
             if db_order:
                 db_order.status = "FAILED"
                 await session.commit()
+
+            user_result = await session.execute(select(User).where(User.id == db_order.user_id))
+            db_user = user_result.scalar_one_or_none()
+            if db_user:
+                db_user.balance += plan["price"]
+                await session.commit()
+
+        try:
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=f"❌ پردازش سرور ناموفق بود.\nمبلغ <b>{plan['price']:,} تومان</b> به کیف پول شما بازگشت داده شد.",
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify user: {e}")
 
     await callback.answer()
 
@@ -383,9 +407,207 @@ async def admin_panel(message: Message):
             select(Order).where(Order.status == "PENDING")
         )
         pending_orders = order_result.scalars().all()
+        completed_result = await session.execute(
+            select(Order).where(Order.status == "COMPLETED")
+        )
+        completed_orders = completed_result.scalars().all()
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 لیست کاربران", callback_data="admin:users")],
+        [InlineKeyboardButton(text="📋 سفارشات در انتظار", callback_data="admin:pending")],
+        [InlineKeyboardButton(text="✅ سفارشات تکمیل شده", callback_data="admin:completed")],
+        [InlineKeyboardButton(text="💰 تغییر قیمت پلن‌ها", callback_data="admin:prices")],
+        [InlineKeyboardButton(text="🔄 رفرش لینک‌ها", callback_data="admin:refresh")],
+    ])
 
     await message.answer(
         f"🔧 پنل ادمین\n\n"
         f"👥 کل کاربران: {len(user_count)}\n"
-        f"⏳ سفارشات در انتظار: {len(pending_orders)}"
+        f"⏳ سفارشات در انتظار: {len(pending_orders)}\n"
+        f"✅ سفارشات تکمیل شده: {len(completed_orders)}",
+        reply_markup=kb,
     )
+
+
+@router.callback_query(F.data == "admin:users")
+async def admin_users(callback: CallbackQuery):
+    if callback.from_user.id != config.ADMIN_ID:
+        await callback.answer("⛔ فقط ادمین", show_alert=True)
+        return
+
+    async with async_session() as session:
+        result = await session.execute(select(User).order_by(User.created_at.desc()).limit(20))
+        users = result.scalars().all()
+
+    if not users:
+        await callback.answer("کاربری یافت نشد", show_alert=True)
+        return
+
+    lines = ["👥 ۲۰ کاربر آخر:\n"]
+    for u in users:
+        lines.append(f"• @{u.username or 'ندارد'} | ID: {u.telegram_id} | 💰 {u.balance:,}")
+
+    await callback.message.answer("\n".join(lines))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:pending")
+async def admin_pending(callback: CallbackQuery):
+    if callback.from_user.id != config.ADMIN_ID:
+        await callback.answer("⛔ فقط ادمین", show_alert=True)
+        return
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Order).where(Order.status.in_(["PENDING", "PROCESSING"])).order_by(Order.created_at.desc()).limit(20)
+        )
+        orders = result.scalars().all()
+
+    if not orders:
+        await callback.answer("سفارش در انتظاری نیست", show_alert=True)
+        return
+
+    lines = ["⏳ سفارشات در انتظار:\n"]
+    for o in orders:
+        lines.append(f"• #{o.id} | {o.plan_name} | {o.status}")
+
+    await callback.message.answer("\n".join(lines))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:completed")
+async def admin_completed(callback: CallbackQuery):
+    if callback.from_user.id != config.ADMIN_ID:
+        await callback.answer("⛔ فقط ادمین", show_alert=True)
+        return
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Order).where(Order.status == "COMPLETED").order_by(Order.created_at.desc()).limit(20)
+        )
+        orders = result.scalars().all()
+
+    if not orders:
+        await callback.answer("سفارش تکمیل شده‌ای نیست", show_alert=True)
+        return
+
+    lines = ["✅ ۲۰ سفارش آخر:\n"]
+    for o in orders:
+        lines.append(f"• #{o.id} | {o.plan_name} | {o.price:,} تومان")
+
+    await callback.message.answer("\n".join(lines))
+    await callback.answer()
+
+
+class PriceEditState(StatesGroup):
+    waiting_for_plan = State()
+    waiting_for_price = State()
+
+
+@router.callback_query(F.data == "admin:prices")
+async def admin_prices(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != config.ADMIN_ID:
+        await callback.answer("⛔ فقط ادمین", show_alert=True)
+        return
+
+    lines = ["💰 قیمت فعلی پلن‌ها:\n"]
+    for p in config.PLANS:
+        lines.append(f"{p['id']}. {p['name']} - {p['price']:,} تومان")
+    lines.append("\nشماره پلن مورد نظر را وارد کنید (۱-۴):")
+
+    await callback.message.answer("\n".join(lines))
+    await state.set_state(PriceEditState.waiting_for_plan)
+    await callback.answer()
+
+
+@router.message(PriceEditState.waiting_for_plan)
+async def process_price_plan(message: Message, state: FSMContext):
+    if message.from_user.id != config.ADMIN_ID:
+        return
+
+    try:
+        plan_id = int(message.text.strip())
+        if plan_id not in [1, 2, 3, 4]:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ شماره پلن معتبر نیست (۱-۴):")
+        return
+
+    plan = config.PLAN_MAP.get(plan_id)
+    await state.update_data(plan_id=plan_id)
+    await message.answer(
+        f"پلن {plan['name']} انتخاب شد.\n"
+        f"قیمت فعلی: {plan['price']:,} تومان\n"
+        f"قیمت جدید را به تومان وارد کنید:"
+    )
+    await state.set_state(PriceEditState.waiting_for_price)
+
+
+@router.message(PriceEditState.waiting_for_price)
+async def process_price_value(message: Message, state: FSMContext):
+    if message.from_user.id != config.ADMIN_ID:
+        return
+
+    try:
+        new_price = int(message.text.strip().replace(",", "").replace(" ", ""))
+        if new_price <= 0:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ لطفاً یک عدد معتبر وارد کنید:")
+        return
+
+    data = await state.get_data()
+    plan_id = data.get("plan_id")
+    await state.clear()
+
+    import json
+
+    for p in config.PLANS:
+        if p["id"] == plan_id:
+            old_price = p["price"]
+            p["price"] = new_price
+            break
+
+    config_file = config.CONFIG_FILE
+    try:
+        with open(config_file, "r") as f:
+            cfg = json.load(f)
+        if "plans" not in cfg:
+            cfg["plans"] = []
+        for p in config.PLANS:
+            found = False
+            for i, saved in enumerate(cfg["plans"]):
+                if saved.get("id") == p["id"]:
+                    cfg["plans"][i]["price"] = p["price"]
+                    found = True
+                    break
+            if not found:
+                cfg["plans"].append(p)
+        with open(config_file, "w") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to save prices to config: {e}")
+
+    await message.answer(
+        f"✅ قیمت پلن {config.PLAN_MAP[plan_id]['name']} تغییر کرد.\n"
+        f"قبل: {old_price:,} تومان\n"
+        f"بعد: {new_price:,} تومان"
+    )
+
+
+@router.callback_query(F.data == "admin:refresh")
+async def admin_refresh(callback: CallbackQuery):
+    if callback.from_user.id != config.ADMIN_ID:
+        await callback.answer("⛔ فقط ادمین", show_alert=True)
+        return
+
+    from arq import create_pool
+    from arq.connections import RedisSettings
+
+    try:
+        pool = await create_pool(RedisSettings(host="127.0.0.1", port=6379))
+        await pool.enqueue_job("refresh_subscriptions")
+        await callback.answer("🔄 رفرش لینک‌ها شروع شد", show_alert=True)
+    except Exception as e:
+        logger.error(f"Failed to enqueue refresh: {e}")
+        await callback.answer("خطا در شروع رفرش", show_alert=True)

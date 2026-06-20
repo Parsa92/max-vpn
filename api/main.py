@@ -3,6 +3,7 @@ import re
 import logging
 import httpx
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import PlainTextResponse
@@ -16,7 +17,6 @@ from database import async_session, init_db
 from models import Order
 
 logger = logging.getLogger("api.main")
-app = FastAPI(title="MAX VPN Delivery API")
 security = HTTPBearer(auto_error=False)
 
 SUB_API_TOKEN = os.environ.get("SUB_API_TOKEN")
@@ -29,9 +29,13 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
     return True
 
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app):
     await init_db()
+    logger.info("Database initialized")
+    yield
+
+app = FastAPI(title="MAX VPN Delivery API", lifespan=lifespan)
 
 
 async def rebrand_config(raw_url: str) -> str:
