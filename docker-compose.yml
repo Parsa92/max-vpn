@@ -2,14 +2,14 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${DB_USER:-maxvpn}
-      POSTGRES_PASSWORD: ${DB_PASS:-maxvpn_pass}
-      POSTGRES_DB: ${DB_NAME:-maxvpn_db}
+      POSTGRES_USER: maxvpn
+      POSTGRES_PASSWORD: maxvpn_pass
+      POSTGRES_DB: maxvpn_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-maxvpn}"]
+      test: ["CMD-SHELL", "pg_isready -U maxvpn"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -30,9 +30,10 @@ services:
       context: .
       dockerfile: Dockerfile.api
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000
-    env_file: .env
     ports:
       - "8000:8000"
+    volumes:
+      - ./config.json:/app/config.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,7 +46,8 @@ services:
       context: .
       dockerfile: Dockerfile.bot
     command: python -m sales_bot.main
-    env_file: .env
+    volumes:
+      - ./config.json:/app/config.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,15 +60,15 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     command: arq userbot.worker.ArqSettings
-    env_file: .env
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - pyrogram_sessions:/app/sessions
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
-    volumes:
-      - pyrogram_sessions:/app/sessions
 
   nginx:
     image: nginx:alpine
@@ -78,7 +80,6 @@ services:
       - ./nginx/ssl_setup.sh:/ssl_setup.sh:ro
       - certbot_conf:/etc/letsencrypt:ro
       - certbot_www:/var/www/certbot:ro
-    env_file: .env
     entrypoint: ["/bin/sh", "/ssl_setup.sh"]
     depends_on:
       - api

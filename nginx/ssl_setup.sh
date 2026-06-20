@@ -6,6 +6,16 @@ KEY_FILE="$SSL_DIR/key.pem"
 
 mkdir -p "$SSL_DIR"
 
+# Read from config.json
+CONFIG_FILE="/app/config.json"
+if [ -f "$CONFIG_FILE" ]; then
+    SERVER_HOST=$(cat "$CONFIG_FILE" | grep -o '"host"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"host"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    USE_VALID_SSL=$(cat "$CONFIG_FILE" | grep -o '"use_valid_ssl"[[:space:]]*:[[:space:]]*[a-z]*' | head -1 | sed 's/.*"use_valid_ssl"[[:space:]]*:[[:space:]]*\(.*\)/\1/')
+fi
+
+SERVER_HOST=${SERVER_HOST:-localhost}
+USE_VALID_SSL=${USE_VALID_SSL:-false}
+
 if [ "$USE_VALID_SSL" = "true" ] || [ "$USE_VALID_SSL" = "True" ]; then
     echo "Setting up Let's Encrypt SSL for domain: $SERVER_HOST"
 
@@ -29,14 +39,14 @@ if [ "$USE_VALID_SSL" = "true" ] || [ "$USE_VALID_SSL" = "True" ]; then
 fi
 
 if [ "$USE_VALID_SSL" != "true" ] && [ "$USE_VALID_SSL" != "True" ]; then
-    echo "Generating self-signed SSL certificate for: ${SERVER_HOST:-localhost}"
+    echo "Generating self-signed SSL certificate for: $SERVER_HOST"
 
     if [ ! -f "$CERT_FILE" ]; then
         openssl req -x509 -nodes -days 365 \
             -newkey rsa:2048 \
             -keyout "$KEY_FILE" \
             -out "$CERT_FILE" \
-            -subj "/C=US/ST=Local/L=Local/O=MAX VPN/CN=${SERVER_HOST:-localhost}" \
+            -subj "/C=US/ST=Local/L=Local/O=MAX VPN/CN=$SERVER_HOST" \
             2>/dev/null
         echo "Self-signed certificate generated"
     else
