@@ -34,7 +34,7 @@ REDIS_HOST = os.environ.get("REDIS_HOST", "127.0.0.1")
 
 DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}:5432/{DB_NAME}"
 DATABASE_URL_SYNC = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:5432/{DB_NAME}"
-REDIS_URL = f"redis://{REDIS_HOST}:6379/0"
+REDIS_URL = _database.get("redis_url") or f"redis://{REDIS_HOST}:6379/0"
 
 GEMINI_API_KEY = _gemini.get("api_key", "")
 GEMINI_MODEL = _gemini.get("model", "gemini-1.5-pro-latest")

@@ -2,6 +2,8 @@
 __pycache__/
 .git/
 *.pyc
+*.session
+*.session-journal
 .mimocode/
 docs/
 .bash_history
