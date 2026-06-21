@@ -344,13 +344,11 @@ async def cb_select_plan(callback: CallbackQuery, bot: Bot):
             db_order = result.scalar_one_or_none()
             if db_order:
                 db_order.status = "FAILED"
-                await session.commit()
-
                 user_result = await session.execute(select(User).where(User.id == db_order.user_id))
                 db_user = user_result.scalar_one_or_none()
                 if db_user:
                     db_user.balance += db_order.price
-                    await session.commit()
+                await session.commit()
 
         try:
             from aiogram import Bot
@@ -364,21 +362,6 @@ async def cb_select_plan(callback: CallbackQuery, bot: Bot):
             await bot.session.close()
         except Exception as notify_err:
             logger.error(f"Failed to notify user: {notify_err}")
-                await session.commit()
-
-            user_result = await session.execute(select(User).where(User.id == db_order.user_id))
-            db_user = user_result.scalar_one_or_none()
-            if db_user:
-                db_user.balance += plan["price"]
-                await session.commit()
-
-        try:
-            await bot.send_message(
-                chat_id=callback.from_user.id,
-                text=f"❌ پردازش سرور ناموفق بود.\nمبلغ <b>{plan['price']:,} تومان</b> به کیف پول شما بازگشت داده شد.",
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify user: {e}")
 
     await callback.answer()
 
