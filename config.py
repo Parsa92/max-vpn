@@ -20,9 +20,9 @@ _server = _config.get("server", {})
 _database = _config.get("database", {})
 
 BOT_TOKEN = _telegram.get("bot_token", "")
-API_ID = int(_telegram.get("api_id", 0))
+API_ID = int(_telegram.get("api_id", 0)) if str(_telegram.get("api_id", "0")).isdigit() else 0
 API_HASH = _telegram.get("api_hash", "")
-ADMIN_ID = int(_telegram.get("admin_id", 0))
+ADMIN_ID = int(_telegram.get("admin_id", 0)) if str(_telegram.get("admin_id", "0")).isdigit() else 0
 BANK_CARD_NUMBER = _payment.get("bank_card_number", "")
 
 DB_USER = _database.get("user", "maxvpn")

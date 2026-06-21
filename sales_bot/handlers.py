@@ -330,10 +330,12 @@ async def cb_select_plan(callback: CallbackQuery, bot: Bot):
     )
 
     from arq import create_pool
+    from arq.connections import RedisSettings
 
     try:
         pool = await create_pool(RedisSettings(host="127.0.0.1", port=6379))
         await pool.enqueue_job("process_order", order_id=order.id, plan_id=plan["id"])
+        await pool.aclose()
         logger.info(f"Order #{order.id} queued for processing")
     except Exception as e:
         logger.error(f"Failed to enqueue order #{order.id}: {e}")
@@ -342,6 +344,26 @@ async def cb_select_plan(callback: CallbackQuery, bot: Bot):
             db_order = result.scalar_one_or_none()
             if db_order:
                 db_order.status = "FAILED"
+                await session.commit()
+
+                user_result = await session.execute(select(User).where(User.id == db_order.user_id))
+                db_user = user_result.scalar_one_or_none()
+                if db_user:
+                    db_user.balance += db_order.price
+                    await session.commit()
+
+        try:
+            from aiogram import Bot
+            from aiogram.client.default import DefaultBotProperties
+            from aiogram.enums import ParseMode
+            bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=f"❌ پردازش سرور ناموفق بود.\nمبلغ <b>{plan['price']:,} تومان</b> به کیف پول شما بازگشت داده شد.",
+            )
+            await bot.session.close()
+        except Exception as notify_err:
+            logger.error(f"Failed to notify user: {notify_err}")
                 await session.commit()
 
             user_result = await session.execute(select(User).where(User.id == db_order.user_id))
@@ -607,6 +629,7 @@ async def admin_refresh(callback: CallbackQuery):
     try:
         pool = await create_pool(RedisSettings(host="127.0.0.1", port=6379))
         await pool.enqueue_job("refresh_subscriptions")
+        await pool.aclose()
         await callback.answer("🔄 رفرش لینک‌ها شروع شد", show_alert=True)
     except Exception as e:
         logger.error(f"Failed to enqueue refresh: {e}")
