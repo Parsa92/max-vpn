@@ -189,7 +189,7 @@ def rebrand_configs(configs: list[str]) -> str:
     return encoded
 
 
-async def purchase_from_source_bot(client: Client, plan: dict) -> str:
+async def purchase_from_source_bot(client: Client, plan: dict) -> tuple[str, str]:
     chat = config.SOURCE_BOT
     username = f"user{int(time.time())}{random.randint(1000, 9999)}"
     target_gb = plan["data_gb"]
@@ -368,7 +368,7 @@ async def purchase_from_source_bot(client: Client, plan: dict) -> str:
 
     logger.info(f"Total configs collected: {len(all_configs)}")
     rebranded_b64 = rebrand_configs(all_configs)
-    return rebranded_b64
+    return rebranded_b64, username
 
 
 async def process_order(ctx: dict, order_id: int, plan_id: int):
@@ -390,7 +390,7 @@ async def process_order(ctx: dict, order_id: int, plan_id: int):
             order.status = "PROCESSING"
             await session.commit()
 
-        rebranded_b64 = await purchase_from_source_bot(client, plan)
+        rebranded_b64, source_username = await purchase_from_source_bot(client, plan)
         logger.info(f"Order #{order_id}: Got rebranded config")
 
         delivery_link = f"https://{config.SERVER_HOST}/sub/{order_id}"
@@ -402,6 +402,7 @@ async def process_order(ctx: dict, order_id: int, plan_id: int):
                 db_order.status = "COMPLETED"
                 db_order.sub_link = delivery_link
                 db_order.raw_sub_link = rebranded_b64
+                db_order.source_username = source_username
                 db_order.completed_at = datetime.datetime.utcnow()
                 await session.commit()
 
@@ -480,10 +481,10 @@ async def refresh_subscriptions(ctx: dict):
                     continue
 
                 chat = config.SOURCE_BOT
-                username = re.search(r'user\d+', order.sub_link or "")
+                username = order.source_username
                 if not username:
+                    logger.warning(f"No source_username for order #{order.id}, skipping")
                     continue
-                username = username.group(0)
 
                 since = time.time() - 1
                 await client.send_message(chat, "/start")

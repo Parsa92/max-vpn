@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: maxvpn
-      POSTGRES_PASSWORD: center1990
+      POSTGRES_PASSWORD: ${DB_PASS:-maxvpn_pass}
       POSTGRES_DB: maxvpn_db
     network_mode: host
     volumes:
@@ -73,8 +73,8 @@ services:
       - ./config.json:/app/config.json:ro
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/ssl_setup.sh:/ssl_setup.sh:ro
-      - certbot_conf:/etc/letsencrypt:ro
-      - certbot_www:/var/www/certbot:ro
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
     entrypoint: ["/bin/sh", "/ssl_setup.sh"]
     depends_on:
       - api

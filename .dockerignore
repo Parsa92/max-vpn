@@ -1,6 +1,12 @@
+config.json
+config.example.json
+install.sh
+README.md
+.git
+.gitignore
+nginx/
 .env
 __pycache__/
-.git/
 *.pyc
 *.session
 *.session-journal

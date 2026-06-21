@@ -29,6 +29,7 @@ class Order(Base):
     status = Column(String(20), default="PENDING", nullable=False)
     sub_link = Column(Text, nullable=True)
     raw_sub_link = Column(Text, nullable=True)
+    source_username = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
 

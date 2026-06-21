@@ -80,6 +80,14 @@ for field in ['bot_token', 'api_id', 'api_hash', 'admin_id']:
 if not cfg['server'].get('host') or cfg['server']['host'].startswith('YOUR_'):
     print('Please fill in server.host')
     sys.exit(1)
+db = cfg.get('database', {})
+if not db.get('password') or db['password'] == 'CHANGE_THIS_PASSWORD':
+    print('Please set a secure database.password in config.json')
+    sys.exit(1)
+gem = cfg.get('gemini', {})
+if not gem.get('api_key') or gem['api_key'].startswith('YOUR_'):
+    print('Please fill in gemini.api_key')
+    sys.exit(1)
 print('Config validation passed!')
 " || { echo -e "${RED}Config validation failed. Please fix config.json${NC}"; exit 1; }
 

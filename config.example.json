@@ -10,7 +10,7 @@
   },
   "database": {
     "user": "maxvpn",
-    "password": "CHANGE_THIS_PASSWORD",
+    "password": "maxvpn_pass",
     "name": "maxvpn_db",
     "redis_url": "redis://localhost:6379/0"
   },
